@@ -1,33 +1,52 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.20.0)
 cmake_policy(SET CMP0048 NEW)
 project(pairs_vins_kickoff_estimator_plugin)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
+# 1 == use rclcpp::Timer implementation
+# 0 == use PAIRS's thread timer implementation
+set(USE_ROS_TIMER 0)
+
+if(${USE_ROS_TIMER})
+  MESSAGE(WARNING "[pairs_vins_kickoff_estimator_plugin]: Compiling with ROS Timers. This can cause high CPU load in runtime.")
+endif()
+
+# set the compile options to show code warnings
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra)
+endif()
+
+if(ENABLE_COVERAGE)
+  message(WARNING "building for coverage, the performance might be limited")
+
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} --coverage -fprofile-arcs")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -fprofile-arcs")
+
+  add_definitions("-O1")
+  add_definitions("-g")
+endif()
+
+set(DEPENDENCIES
+  rclcpp
   pairs_uav_managers
   pairs_uav_state_estimators
-  )
+)
 
 set(LIBRARIES
   PairsUavStateEstimators_VinsKickoff
-  )
+)
 
-catkin_package(
-  CATKIN_DEPENDS
-  pairs_uav_managers
-  pairs_uav_state_estimators
-  )
-
+foreach(DEP IN LISTS DEPENDENCIES)
+  find_package(${DEP} REQUIRED)
+endforeach()
 
 include_directories(
-  include
-  )
-
-find_package(pairs_uav_state_estimators REQUIRED)
+  ${rclcpp_INCLUDE_DIRS}
+  ${pairs_lib_INCLUDE_DIRS}
+)
 
 ###########
 ## Build ##
@@ -35,42 +54,49 @@ find_package(pairs_uav_state_estimators REQUIRED)
 
 add_library(PairsUavStateEstimators_VinsKickoff
   src/vins_kickoff_estimator_plugin.cpp
-  )
+)
 
-add_dependencies(PairsUavStateEstimators_VinsKickoff
-  ${${PROJECT_NAME}_EXPORTED_TARGETS}
-  ${catkin_EXPORTED_TARGETS}
-  )
+ament_target_dependencies(PairsUavStateEstimators_VinsKickoff
+  ${DEPENDENCIES}
+)
 
-target_link_libraries(PairsUavStateEstimators_VinsKickoff
-  ${catkin_LIBRARIES}
-  )
+rclcpp_components_register_nodes(PairsUavStateEstimators_VinsKickoff PLUGIN "vins_kickoff::VinsKickoff" EXECUTABLE PairsUavStateEstimators_VinsKickoff)
 
-target_include_directories(PairsUavStateEstimators_VinsKickoff
-  PRIVATE
-  ${catkin_INCLUDE_DIRS}
-  )
+target_compile_definitions(PairsUavStateEstimators_VinsKickoff PRIVATE USE_ROS_TIMER=${USE_ROS_TIMER})
 
 ## --------------------------------------------------------------
 ## |                           Install                          |
 ## --------------------------------------------------------------
 
+ament_export_libraries(
+  ${LIBRARIES}
+)
+
 install(TARGETS ${LIBRARIES}
-  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  RUNTIME DESTINATION ${CATKIN_GLOBAL_BIN_DESTINATION}
-  )
+  EXPORT export_${PROJECT_NAME}
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
 
-install(DIRECTORY tmux/
+install(
+  DIRECTORY tmux
   USE_SOURCE_PERMISSIONS
-  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-  )
+  DESTINATION bin/${PROJECT_NAME}
+)
 
-install(DIRECTORY tmux
+install(
+  DIRECTORY tmux
   USE_SOURCE_PERMISSIONS
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-  )
+  DESTINATION share/${PROJECT_NAME}
+)
 
-install(FILES estimator_plugins.xml
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-  )
+ament_export_targets(
+  export_${PROJECT_NAME} HAS_LIBRARY_TARGET
+)
+
+ament_export_dependencies(
+  ${DEPENDENCIES}
+)
+
+ament_package()

@@ -1,7 +1,8 @@
 /* includes //{ */
 
 /* #include <pairs_vins_kickoff_estimator_plugin/include/vins_kickoff.h> */
-#include "vins_kickoff_estimator_plugin.h"
+#include "../include/vins_kickoff_estimator_plugin.h"
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 //}
 
@@ -9,7 +10,8 @@ namespace vins_kickoff
 {
 
 /* initialize() //{*/
-void VinsKickoff::initialize(ros::NodeHandle &nh, const std::shared_ptr<pairs_uav_managers::estimation_manager::CommonHandlers_t> &ch,
+void VinsKickoff::initialize([[maybe_unused]] const rclcpp::Node::SharedPtr &node,
+                             const std::shared_ptr<pairs_uav_managers::estimation_manager::CommonHandlers_t> &ch,
                              const std::shared_ptr<pairs_uav_managers::estimation_manager::PrivateHandlers_t> &ph) {
 
   ch_ = ch;
@@ -19,7 +21,7 @@ void VinsKickoff::initialize(ros::NodeHandle &nh, const std::shared_ptr<pairs_ua
 
   // | --------------- param loader initialization -------------- |
 
-  ph->param_loader->addYamlFile(ros::package::getPath("pairs_uav_managers") + "/config/public/uav_manager.yaml");
+  ph->param_loader->addYamlFile(ament_index_cpp::get_package_share_directory("pairs_uav_managers") + "/config/public/uav_manager.yaml");
 
   ph->param_loader->loadParam("pairs_uav_managers/uav_manager/takeoff/during_takeoff/tracker", takeoff_tracker_name_);
   /* takeoff_tracker_name_ = "LandoffTracker"; */
@@ -30,7 +32,7 @@ void VinsKickoff::initialize(ros::NodeHandle &nh, const std::shared_ptr<pairs_ua
 
   double max_kicking_time;
   ph->param_loader->loadParam("kickoff/max_duration", max_kicking_time);
-  dur_max_kicking_ = ros::Duration(max_kicking_time);
+  dur_max_kicking_ = rclcpp::Duration(std::chrono::seconds(static_cast<int>(max_kicking_time)));
 
   ph->param_loader->loadParam("kickoff/target_estimator", target_estimator_);
 
@@ -43,47 +45,50 @@ void VinsKickoff::initialize(ros::NodeHandle &nh, const std::shared_ptr<pairs_ua
 
   // | ------------------ timers initialization ----------------- |
   //
-  timer_update_ = nh.createTimer(ros::Rate(ch_->desired_uav_state_rate), &VinsKickoff::timerUpdate, this);
+  timer_update_ = node_->create_wall_timer(
+    std::chrono::duration<double>(1.0 / ch_->desired_uav_state_rate),
+    std::bind(&VinsKickoff::timerUpdate, this)
+  );
 
   // | ---------------- publishers initialization --------------- |
-  ph_odom_ = pairs_lib::PublisherHandler<nav_msgs::Odometry>(nh, Support::toSnakeCase(getName()) + "/odom", 10);
+  ph_odom_ = pairs_lib::PublisherHandler<nav_msgs::msg::Odometry>(node_, Support::toSnakeCase(getName()) + "/odom");
 
   if (ch_->debug_topics.state) {
-    ph_uav_state_ = pairs_lib::PublisherHandler<pairs_msgs::UavState>(nh, Support::toSnakeCase(getName()) + "/uav_state", 10);
+    ph_uav_state_ = pairs_lib::PublisherHandler<pairs_msgs::msg::UavState>(node_, Support::toSnakeCase(getName()) + "/uav_state");
   }
   if (ch_->debug_topics.covariance) {
-    ph_pose_covariance_  = pairs_lib::PublisherHandler<pairs_msgs::Float64ArrayStamped>(nh, Support::toSnakeCase(getName()) + "/pose_covariance", 10);
-    ph_twist_covariance_ = pairs_lib::PublisherHandler<pairs_msgs::Float64ArrayStamped>(nh, Support::toSnakeCase(getName()) + "/twist_covariance", 10);
+    ph_pose_covariance_  = pairs_lib::PublisherHandler<pairs_msgs::msg::Float64ArrayStamped>(node_, Support::toSnakeCase(getName()) + "/pose_covariance");
+    ph_twist_covariance_ = pairs_lib::PublisherHandler<pairs_msgs::msg::Float64ArrayStamped>(node_, Support::toSnakeCase(getName()) + "/twist_covariance");
   }
   if (ch_->debug_topics.innovation) {
-    ph_innovation_ = pairs_lib::PublisherHandler<nav_msgs::Odometry>(nh, Support::toSnakeCase(getName()) + "/innovation", 10);
+    ph_innovation_ = pairs_lib::PublisherHandler<nav_msgs::msg::Odometry>(node_, Support::toSnakeCase(getName()) + "/innovation");
   }
   if (ch_->debug_topics.diag) {
-    ph_diagnostics_ = pairs_lib::PublisherHandler<pairs_msgs::EstimatorDiagnostics>(nh, Support::toSnakeCase(getName()) + "/diagnostics", 10);
+    ph_diagnostics_ = pairs_lib::PublisherHandler<pairs_msgs::msg::EstimatorDiagnostics>(node_, Support::toSnakeCase(getName()) + "/diagnostics");
   }
 
   // | --------------- subscribers initialization --------------- |
-  pairs_lib::SubscribeHandlerOptions shopts;
-  shopts.nh                 = nh;
+  pairs_lib::SubscriberHandlerOptions shopts;
+  shopts.node               = node_;
   shopts.node_name          = getPrintName();
   shopts.no_message_timeout = pairs_lib::no_timeout;
   shopts.threadsafe         = true;
   shopts.autostart          = true;
-  shopts.queue_size         = 10;
-  shopts.transport_hints    = ros::TransportHints().tcpNoDelay();
+  //shopts.qos                = rclcpp::QoS(rclcpp::KeepLast(10));
+  //shopts.transport_hints    = ros::TransportHints().tcpNoDelay();
 
-  sh_control_manager_diag_    = pairs_lib::SubscribeHandler<pairs_msgs::ControlManagerDiagnostics>(shopts, "control_manager_diagnostics_in");
-  sh_controller_diag_         = pairs_lib::SubscribeHandler<pairs_msgs::ControllerDiagnostics>(shopts, "controller_diagnostics_in");
-  sh_estimation_manager_diag_ = pairs_lib::SubscribeHandler<pairs_msgs::EstimationDiagnostics>(shopts, "diagnostics_out");
-  sh_hw_api_orient_           = pairs_lib::SubscribeHandler<geometry_msgs::QuaternionStamped>(shopts, topic_orientation_);
-  sh_hw_api_ang_vel_          = pairs_lib::SubscribeHandler<geometry_msgs::Vector3Stamped>(shopts, topic_angular_velocity_);
-  sh_control_reference_       = pairs_lib::SubscribeHandler<nav_msgs::Odometry>(shopts, "control_reference_in");
+  sh_control_manager_diag_    = pairs_lib::SubscriberHandler<pairs_msgs::msg::ControlManagerDiagnostics>(shopts, "control_manager_diagnostics_in");
+  sh_controller_diag_         = pairs_lib::SubscriberHandler<pairs_msgs::msg::ControllerDiagnostics>(shopts, "controller_diagnostics_in");
+  sh_estimation_manager_diag_ = pairs_lib::SubscriberHandler<pairs_msgs::msg::EstimationDiagnostics>(shopts, "diagnostics_out");
+  sh_hw_api_orient_           = pairs_lib::SubscriberHandler<geometry_msgs::msg::QuaternionStamped>(shopts, topic_orientation_);
+  sh_hw_api_ang_vel_          = pairs_lib::SubscriberHandler<geometry_msgs::msg::Vector3Stamped>(shopts, topic_angular_velocity_);
+  sh_control_reference_       = pairs_lib::SubscriberHandler<nav_msgs::msg::Odometry>(shopts, "control_reference_in");
 
   /*//{ initialize service clients */
 
   // | ------------- service clients initialization ------------- |
-  srvch_failsafe_.initialize(nh, "failsafe_out");
-  srvch_switch_estimator_.initialize(nh, "change_estimator_in");
+  srvch_failsafe_ = pairs_lib::ServiceClientHandler<std_srvs::srv::Trigger>(node_, "failsafe_out");
+  srvch_switch_estimator_ = pairs_lib::ServiceClientHandler<pairs_msgs::srv::String>(node_, "change_estimator_in");
 
   /*//}*/
 
@@ -119,9 +124,9 @@ void VinsKickoff::initialize(ros::NodeHandle &nh, const std::shared_ptr<pairs_ua
   // | ------------------ finish initialization ----------------- |
 
   if (changeState(INITIALIZED_STATE)) {
-    ROS_INFO("[%s]: Estimator initialized", getPrintName().c_str());
+    RCLCPP_INFO(node_->get_logger(), "[%s]: Estimator initialized", getPrintName().c_str());
   } else {
-    ROS_INFO("[%s]: Estimator could not be initialized", getPrintName().c_str());
+    RCLCPP_INFO(node_->get_logger(), "[%s]: Estimator could not be initialized", getPrintName().c_str());
   }
 }
 /*//}*/
@@ -132,17 +137,16 @@ bool VinsKickoff::start(void) {
 
   if (isInState(READY_STATE)) {
 
-    timer_update_.start();
     changeState(STARTED_STATE);
     return true;
 
   } else {
-    ROS_WARN("[%s]: Estimator must be in READY_STATE to start it", getPrintName().c_str());
-    ros::Duration(1.0).sleep();
+    RCLCPP_WARN(node_->get_logger(), "[%s]: Estimator must be in READY_STATE to start it", getPrintName().c_str());
+    rclcpp::sleep_for(std::chrono::seconds(1));
   }
   return false;
 
-  ROS_ERROR("[%s]: Failed to start", getPrintName().c_str());
+  RCLCPP_ERROR(node_->get_logger(), "[%s]: Failed to start", getPrintName().c_str());
   return false;
 }
 /*//}*/
@@ -164,20 +168,20 @@ bool VinsKickoff::pause(void) {
 bool VinsKickoff::reset(void) {
 
   if (!isInitialized()) {
-    ROS_ERROR("[%s]: Cannot reset uninitialized estimator", getPrintName().c_str());
+    RCLCPP_ERROR(node_->get_logger(), "[%s]: Cannot reset uninitialized estimator", getPrintName().c_str());
     return false;
   }
 
   changeState(STOPPED_STATE);
 
-  ROS_INFO("[%s]: Estimator reset", getPrintName().c_str());
+  RCLCPP_INFO(node_->get_logger(), "[%s]: Estimator reset", getPrintName().c_str());
 
   return true;
 }
 /*//}*/
 
 /* timerUpdate() //{*/
-void VinsKickoff::timerUpdate([[maybe_unused]] const ros::TimerEvent &event) {
+void VinsKickoff::timerUpdate() {
 
 
   if (!isInitialized()) {
@@ -193,9 +197,9 @@ void VinsKickoff::timerUpdate([[maybe_unused]] const ros::TimerEvent &event) {
 
       if (sh_hw_api_orient_.hasMsg() && sh_hw_api_ang_vel_.hasMsg()) {
         changeState(READY_STATE);
-        ROS_INFO_THROTTLE(1.0, "[%s]: Estimator is ready to start", getPrintName().c_str());
+        RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000, "[%s]: Estimator is ready to start", getPrintName().c_str());
       } else {
-        ROS_INFO_THROTTLE(1.0, "[%s]: %s msg on topic %s", getPrintName().c_str(), Support::waiting_for_string.c_str(), sh_hw_api_orient_.topicName().c_str());
+        RCLCPP_INFO_THROTTLE(node_->get_logger(), *clock_, 1000, "[%s]: %s msg on topic %s", getPrintName().c_str(), Support::waiting_for_string.c_str(), sh_hw_api_orient_.topicName().c_str());
         return;
       }
 
@@ -209,7 +213,7 @@ void VinsKickoff::timerUpdate([[maybe_unused]] const ros::TimerEvent &event) {
     case STARTED_STATE: {
 
       if (!sh_control_manager_diag_.hasMsg()) {
-        ROS_WARN_THROTTLE(1.0, "[%s]: waiting for control manager diagnostics", getPrintName().c_str());
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000, "[%s]: waiting for control manager diagnostics", getPrintName().c_str());
         return;
       }
 
@@ -223,29 +227,29 @@ void VinsKickoff::timerUpdate([[maybe_unused]] const ros::TimerEvent &event) {
       // first we wait until we start taking off (detected by switching into landoff tracker and finishing rampup)
       if (!is_taking_off_ && sh_control_manager_diag_.hasMsg() && sh_control_manager_diag_.getMsg()->active_tracker == takeoff_tracker_name_ &&
           sh_controller_diag_.hasMsg() && !sh_controller_diag_.getMsg()->ramping_up) {
-        t_init_kickoff_ = ros::Time::now();
+        t_init_kickoff_ = node_->now();
         is_taking_off_  = true;
       }
 
       if (is_taking_off_) {
 
-        ROS_INFO("[%s]: time kicking off: %.2f/%.2f", getPrintName().c_str(), (ros::Time::now() - t_init_kickoff_).toSec(), dur_max_kicking_.toSec());
+        RCLCPP_INFO(node_->get_logger(), "[%s]: time kicking off: %.2f/%.2f", getPrintName().c_str(), (node_->now() - t_init_kickoff_).seconds(), dur_max_kicking_.seconds());
 
         // we are waiting until vins estimator is initialized so we can switch into it
         if (isVinsEstimatorInitialized()) {
-          ROS_INFO("[%s]: %s estimator is running, trying to switch", getPrintName().c_str(), target_estimator_.c_str());
+          RCLCPP_INFO(node_->get_logger(), "[%s]: %s estimator is running, trying to switch", getPrintName().c_str(), target_estimator_.c_str());
           switch_estimator_call_succeeded_ = callSwitchEstimatorService();
         }
 
         // switch into vins estimator successful, this kickoff estimator's job is done
         if (switch_estimator_call_succeeded_) {
-          ROS_INFO("[%s]: vins kickoff took %.2f", getPrintName().c_str(), (ros::Time::now() - t_init_kickoff_).toSec());
+          RCLCPP_INFO(node_->get_logger(), "[%s]: vins kickoff took %.2f", getPrintName().c_str(), (node_->now() - t_init_kickoff_).seconds());
           changeState(STOPPED_STATE);
         }
 
         // did not manage to initialize vins estimator in time, call failsafe
-        if (ros::Time::now() - t_init_kickoff_ > dur_max_kicking_) {
-          ROS_ERROR("[%s]: max kickoff time elapsed without vins estimator initialization, calling failsafe", getPrintName().c_str());
+        if (node_->now() - t_init_kickoff_ > dur_max_kicking_) {
+          RCLCPP_ERROR(node_->get_logger(), "[%s]: max kickoff time elapsed without vins estimator initialization, calling failsafe", getPrintName().c_str());
           failsafe_call_succeeded_ = callFailsafeService();
           changeState(ERROR_STATE);
         }
@@ -255,14 +259,14 @@ void VinsKickoff::timerUpdate([[maybe_unused]] const ros::TimerEvent &event) {
     }
 
     case STOPPED_STATE: {
-      ROS_INFO_ONCE("[%s]: my job is done here", getPrintName().c_str());
+      RCLCPP_INFO_ONCE(node_->get_logger(), "[%s]: my job is done here", getPrintName().c_str());
       break;
     }
 
     case ERROR_STATE: {
       // call failsafe until the call succeeds
       if (!failsafe_call_succeeded_) {
-        ROS_ERROR_THROTTLE(1.0, "[%s]: calling failsafe", getPrintName().c_str());
+        RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000, "[%s]: calling failsafe", getPrintName().c_str());
         failsafe_call_succeeded_ = callFailsafeService();
       }
       break;
@@ -287,20 +291,21 @@ void VinsKickoff::timerUpdate([[maybe_unused]] const ros::TimerEvent &event) {
 void VinsKickoff::updateUavState() {
 
   if (!sh_hw_api_orient_.hasMsg()) {
-    ROS_WARN_THROTTLE(1.0, "[%s]: has not received orientation on topic %s yet", getPrintName().c_str(), sh_hw_api_orient_.topicName().c_str());
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000, "[%s]: has not received orientation on topic %s yet", getPrintName().c_str(), sh_hw_api_orient_.topicName().c_str());
     return;
   }
 
   if (!sh_hw_api_ang_vel_.hasMsg()) {
-    ROS_WARN_THROTTLE(1.0, "[%s]: has not received angular velocity on topic %s yet", getPrintName().c_str(), sh_hw_api_ang_vel_.topicName().c_str());
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *clock_, 1000, "[%s]: has not received angular velocity on topic %s yet", getPrintName().c_str(), sh_hw_api_ang_vel_.topicName().c_str());
     return;
   }
-  pairs_lib::ScopeTimer scope_timer = pairs_lib::ScopeTimer("StateGeneric::updateUavState", ch_->scope_timer.logger, ch_->scope_timer.enabled);
 
-  const ros::Time time_now = ros::Time::now();
+  pairs_lib::ScopeTimer scope_timer = pairs_lib::ScopeTimer(node_, "StateGeneric::updateUavState", ch_->scope_timer.logger, ch_->scope_timer.enabled);
 
-  pairs_msgs::UavState uav_state = uav_state_init_;
-  uav_state.header.stamp       = time_now;
+  const rclcpp::Time time_now = node_->now();
+
+  pairs_msgs::msg::UavState uav_state = uav_state_init_;
+  uav_state.header.stamp            = time_now;
 
   const double hdg = 0;
 
@@ -309,7 +314,7 @@ void VinsKickoff::updateUavState() {
   if (res) {
     uav_state.pose.orientation = res.value();
   } else {
-    ROS_ERROR_THROTTLE(1.0, "[%s]: could not rotate orientation by heading", getPrintName().c_str());
+    RCLCPP_ERROR_THROTTLE(node_->get_logger(), *clock_, 1000, "[%s]: could not rotate orientation by heading", getPrintName().c_str());
     return;
   }
 
@@ -321,12 +326,12 @@ void VinsKickoff::updateUavState() {
     uav_state.pose.position   = sh_control_reference_.getMsg()->pose.pose.position;
     uav_state.velocity.linear = sh_control_reference_.getMsg()->twist.twist.linear;
     uav_state.pose.position.z -= 0.2;
-    ROS_INFO("[%s]: fabricated z: %.2f", getPrintName().c_str(), uav_state.pose.position.z);
+    RCLCPP_INFO(node_->get_logger(), "[%s]: fabricated z: %.2f", getPrintName().c_str(), uav_state.pose.position.z);
   }
 
-  const nav_msgs::Odometry odom = Support::uavStateToOdom(uav_state);
+  const nav_msgs::msg::Odometry odom = Support::uavStateToOdom(uav_state);
 
-  nav_msgs::Odometry innovation = innovation_init_;
+  nav_msgs::msg::Odometry innovation = innovation_init_;
 
   innovation.header.stamp = time_now;
 
@@ -334,7 +339,7 @@ void VinsKickoff::updateUavState() {
   innovation.pose.pose.position.y = 0.0;
   innovation.pose.pose.position.z = 0.0;
 
-  pairs_msgs::Float64ArrayStamped pose_covariance, twist_covariance;
+  pairs_msgs::msg::Float64ArrayStamped pose_covariance, twist_covariance;
   pose_covariance_.header.stamp  = time_now;
   twist_covariance_.header.stamp = time_now;
 
@@ -361,36 +366,37 @@ bool VinsKickoff::isVinsEstimatorInitialized() {
 /*//}*/
 
 /*//{ setUavState() */
-bool VinsKickoff::setUavState([[maybe_unused]] const pairs_msgs::UavState &uav_state) {
+bool VinsKickoff::setUavState([[maybe_unused]] const pairs_msgs::msg::UavState &uav_state) {
 
   if (!isInState(STOPPED_STATE)) {
-    ROS_WARN("[%s]: Estimator state can be set only in the STOPPED state", getPrintName().c_str());
+    RCLCPP_WARN(node_->get_logger(), "[%s]: Estimator state can be set only in the STOPPED state", getPrintName().c_str());
     return false;
   }
 
-  ROS_WARN("[%s]: Setting the state of this estimator is not implemented.", getPrintName().c_str());
+  RCLCPP_WARN(node_->get_logger(), "[%s]: Setting the state of this estimator is not implemented.", getPrintName().c_str());
   return false;
 }
 /*//}*/
 
 /*//{ callFailsafeService() */
 bool VinsKickoff::callFailsafeService() {
-  std_srvs::Trigger srv_out;
-  return srvch_failsafe_.call(srv_out);
+  auto srv_in = std::make_shared<std_srvs::srv::Trigger::Request>();
+  auto srv_out = srvch_failsafe_.callSync(srv_in).value();
+  return srv_out->success;
 }
 /*//}*/
 
 /*//{ callSwitchEstimatorService() */
 bool VinsKickoff::callSwitchEstimatorService() {
-  pairs_msgs::String srv_out;
-  srv_out.request.value = target_estimator_;
-  bool success          = srvch_switch_estimator_.call(srv_out);
-  success &= srv_out.response.success;
-  return success;
+  auto srv_in = std::make_shared<pairs_msgs::srv::String::Request>();
+  srv_in->value = target_estimator_;
+
+  auto srv_out = srvch_switch_estimator_.callSync(srv_in).value();
+  return srv_out->success;
 }
 /*//}*/
 
 }  // namespace vins_kickoff
 
-#include <pluginlib/class_list_macros.h>
-PLUGINLIB_EXPORT_CLASS(vins_kickoff::VinsKickoff, pairs_uav_managers::StateEstimator)
+#include <rclcpp_components/register_node_macro.hpp>
+RCLCPP_COMPONENTS_REGISTER_NODE(vins_kickoff::VinsKickoff);

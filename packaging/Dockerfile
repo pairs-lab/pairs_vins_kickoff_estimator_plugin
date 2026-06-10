@@ -1,5 +1,5 @@
-# Toolchain image for building ROS noetic .deb packages for pairs_vins_kickoff_estimator_plugin.
-FROM ros:noetic-ros-base
+# Toolchain image for building ROS jazzy .deb packages for pairs_vins_kickoff_estimator_plugin.
+FROM ros:jazzy-ros-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 

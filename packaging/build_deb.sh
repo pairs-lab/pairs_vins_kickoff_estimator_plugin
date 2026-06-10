@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Runs INSIDE the ros:noetic packaging container. Installs prebuilt PAIRS
+# Runs INSIDE the ros:jazzy packaging container. Installs prebuilt PAIRS
 # dependency .debs from /prebuilt, then builds pairs_vins_kickoff_estimator_plugin and copies the .deb to /output.
 #   PAIRS deps (build order, supplied from /prebuilt): pairs_uav_managers pairs_uav_state_estimators
 set -eo pipefail
-ROS_DISTRO_NAME="noetic"; OS_NAME="ubuntu"; OS_VERSION="focal"
+ROS_DISTRO_NAME="jazzy"; OS_NAME="ubuntu"; OS_VERSION="noble"
 source "/opt/ros/${ROS_DISTRO_NAME}/setup.bash"
 set -u
 
 LOCAL_RULES="/src/pairs_vins_kickoff_estimator_plugin/packaging/rosdep/pairs.yaml"
 echo "yaml file://${LOCAL_RULES}" | sudo tee /etc/ros/rosdep/sources.list.d/10-pairs.list >/dev/null
-rosdep update --include-eol-distros
+rosdep update
 sudo apt-get update
 mkdir -p /output
 
