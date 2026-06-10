@@ -1,0 +1,5 @@
+<library path="lib/libPairsUavStateEstimators_VinsKickoff">
+  <class name="vins_kickoff/VinsKickoffEstimatorPlugin" type="vins_kickoff::VinsKickoff" base_class_type="pairs_uav_managers::StateEstimator">
+    <description>vins_kickoff state estimator</description>
+  </class>
+</library>
