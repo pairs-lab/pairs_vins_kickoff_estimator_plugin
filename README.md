@@ -1,7 +1,6 @@
 # pairs_vins_kickoff_estimator_plugin
 
-Part of the **PAIRS UAV system** — a faithful rename-port of the CTU-MRS
-`mrs_vins_kickoff_estimator_plugin` package.
+Part of the **PAIRS UAV system**.
 
 ## Branches
 - `ros1` — ROS 1 Noetic (catkin)
@@ -13,7 +12,5 @@ sudo apt install ros-noetic-pairs-vins-kickoff-estimator-plugin
 ```
 
 ## License
-BSD 3-Clause. Derived from the CTU-MRS `mrs_vins_kickoff_estimator_plugin` package; the original
+BSD 3-Clause. Derived from the CTU-MRS `pairs_vins_kickoff_estimator_plugin` package; the original
 copyright is retained in [LICENSE](LICENSE).
-
-Maintainer: Thanh Nguyen Canh <canhthanh@vnu.edu.vn>
